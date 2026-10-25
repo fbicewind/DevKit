@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { mockSettings } from "./settings-fixture";
 
 test("preview explains native capabilities and preserves inputs between tools", async ({
   page,
@@ -37,9 +38,7 @@ test("random generation validates limits before invoking backend", async ({
   await expect(page.getByRole("alert")).toContainText("1–4096");
 });
 
-test("signature rejects reserved or non-string variables", async ({
-  page,
-}) => {
+test("signature rejects reserved or non-string variables", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "签名计算 模板与摘要" }).click();
   await page
@@ -116,6 +115,7 @@ test("JSON IPC completion refreshes the tree without dirtying or rounding output
               rememberWindow: true,
               compact: false,
               theme: "dark",
+              jsonEditLimitMib: 10,
               templates: [],
               shortcuts: [],
             },
@@ -177,4 +177,101 @@ test("JSON IPC completion refreshes the tree without dirtying or rounding output
     "9007199254740993123456789",
   );
   await expect(page.locator(".operation-status")).toContainText("格式化完成");
+});
+
+for (const viewport of [
+  { width: 900, height: 420 },
+  { width: 520, height: 420 },
+]) {
+  test(`sidebar toggle stays above status bar and expands at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }) => {
+    await mockSettings(page);
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+    const compact = viewport.width <= 800;
+    const toggle = page.getByRole("button", {
+      name: compact ? "展开侧边栏" : "收起侧边栏",
+      exact: true,
+    });
+    await expect(toggle).toBeVisible();
+    const box = (await toggle.boundingBox())!;
+    const status = (await page.locator(".statusbar").boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(status.y);
+    const width = (await page.locator(".sidebar").boundingBox())!.width;
+    await toggle.click();
+    const opposite = page.getByRole("button", {
+      name: compact ? "收起侧边栏" : "展开侧边栏",
+      exact: true,
+    });
+    await expect(opposite).toHaveAttribute("aria-expanded", String(compact));
+    await expect
+      .poll(async () => (await page.locator(".sidebar").boundingBox())!.width)
+      .toBe(compact ? 185 : 62);
+    expect(width).toBe(compact ? 62 : 185);
+    await opposite.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", String(!compact));
+    await page
+      .locator("nav")
+      .getByTitle("设置与快捷键", { exact: true })
+      .click();
+    const after = (await page
+      .getByRole("button", {
+        name: compact ? "展开侧边栏" : "收起侧边栏",
+        exact: true,
+      })
+      .boundingBox())!;
+    expect(after.y + after.height).toBeLessThanOrEqual(status.y);
+  });
+}
+
+test("JSON edit limit defaults to 10 MiB, saves a custom value, and survives reload", async ({
+  page,
+}) => {
+  await mockSettings(page);
+  await page.goto("/");
+  await page.locator("nav").getByTitle("设置与快捷键", { exact: true }).click();
+  const input = page.getByRole("spinbutton", { name: "编辑上限（MiB）" });
+  await expect(input).toHaveValue("10");
+  await input.fill("24");
+  await page.getByRole("button", { name: "保存编辑上限" }).click();
+  await expect(page.getByText("JSON 编辑上限已保存为 24 MiB")).toBeVisible();
+  await page.reload();
+  await page.locator("nav").getByTitle("设置与快捷键", { exact: true }).click();
+  await expect(input).toHaveValue("24");
+  await input.fill("65");
+  await page.getByRole("button", { name: "保存编辑上限" }).click();
+  await page.reload();
+  await page.locator("nav").getByTitle("设置与快捷键", { exact: true }).click();
+  await expect(input).toHaveValue("24");
+});
+
+test("editor accepts over 2 MiB by default and applies a reduced UTF-8 byte limit immediately", async ({
+  page,
+}) => {
+  await mockSettings(page);
+  await page.goto("/");
+  const editor = page.getByLabel("JSON 输入 / 输出", { exact: true });
+  const text = `"${"中".repeat(750_000)}"`;
+  await editor.fill(text);
+  await expect(page.locator(".editor-pane .pane-header small")).toHaveText(
+    "2.15 MiB",
+  );
+  await page.locator("nav").getByTitle("设置与快捷键", { exact: true }).click();
+  await page.getByRole("spinbutton", { name: "编辑上限（MiB）" }).fill("1");
+  await page.getByRole("button", { name: "保存编辑上限" }).click();
+  await expect(page.getByText("JSON 编辑上限已保存为 1 MiB")).toBeVisible();
+  await page.locator("nav").getByTitle("JSON 工具", { exact: true }).click();
+  // Lowering the limit preserves existing input and still permits deletion.
+  await expect(page.locator(".editor-pane .pane-header small")).toHaveText(
+    "2.15 MiB",
+  );
+  await editor.fill("");
+  await editor.fill(`"${"中".repeat(400_000)}"`);
+  await expect(page.getByRole("alert")).toContainText("当前编辑上限为 1 MiB");
+  await expect
+    .poll(() => editor.evaluate((element) => element.textContent?.length))
+    .toBe(0);
+  await editor.fill('{"ok":true}');
+  await expect(editor).toHaveText('{"ok":true}');
 });

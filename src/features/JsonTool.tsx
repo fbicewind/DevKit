@@ -10,6 +10,8 @@ import {
   X,
   Check,
   RefreshCw,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { JsonEditor } from "../components/JsonEditor";
 import { JsonTree } from "../components/JsonTree";
@@ -27,7 +29,13 @@ import {
 import type { Opened, TaskStatus, Transform, Failure } from "../services/api";
 const sample =
   '{\n  "code": 200,\n  "message": "success",\n  "data": {\n    "items": [\n      { "id": 1, "name": "Alpha", "enabled": true },\n      { "id": 2, "name": "Beta", "enabled": false }\n    ],\n    "total": 2,\n    "meta": { "source": "DevKit", "tags": ["local", "json", "tools"] }\n  },\n  "largeInteger": 9007199254740993123456789,\n  "nullValue": null\n}';
-export function JsonTool({ active }: { active: boolean }) {
+export function JsonTool({
+  active,
+  editLimitMib,
+}: {
+  active: boolean;
+  editLimitMib: number;
+}) {
   const [text, setText] = useState(sample);
   const [opened, setOpened] = useState<Opened>();
   const [dirty, setDirty] = useState(true);
@@ -36,6 +44,7 @@ export function JsonTool({ active }: { active: boolean }) {
   const [error, setError] = useState<Failure>();
   const [indent, setIndent] = useState("2");
   const [direction, setDirection] = useState("asc");
+  const [showTree, setShowTree] = useState(true);
   const [message, setMessage] = useState(
     "打开文件或粘贴 JSON，点击校验查看节点",
   );
@@ -243,6 +252,20 @@ export function JsonTool({ active }: { active: boolean }) {
             <option value="tab">Tab</option>
           </select>
         </label>
+        {!large && (
+          <button
+            aria-controls="json-node-tree"
+            aria-expanded={showTree}
+            onClick={() => setShowTree((visible) => !visible)}
+          >
+            {showTree ? (
+              <PanelRightClose size={14} />
+            ) : (
+              <PanelRightOpen size={14} />
+            )}
+            {showTree ? "隐藏节点树" : "显示节点树"}
+          </button>
+        )}
         <div className="flex-spacer" />
         <button
           title="导入剪贴板（支持大 JSON）"
@@ -261,7 +284,9 @@ export function JsonTool({ active }: { active: boolean }) {
           导出
         </button>
       </div>
-      <div className={`json-panes ${large ? "large-mode" : ""}`}>
+      <div
+        className={`json-panes ${large ? "large-mode" : showTree ? "" : "editor-only"}`}
+      >
         {!large ? (
           <div className="pane editor-pane">
             <div className="pane-header">
@@ -282,10 +307,11 @@ export function JsonTool({ active }: { active: boolean }) {
                 setError(undefined);
               }}
               disabled={busy}
+              limitBytes={editLimitMib * 1024 * 1024}
               errorLine={error?.line}
               onLimit={() =>
                 notice(
-                  "编辑器上限为 2 MiB，请用文件或“粘贴”按钮打开大 JSON",
+                  `当前编辑上限为 ${editLimitMib} MiB，可在设置中调整，或用文件 / “粘贴”按钮打开大 JSON`,
                   true,
                 )
               }
@@ -325,7 +351,7 @@ export function JsonTool({ active }: { active: boolean }) {
             </button>
           </div>
         )}
-        <JsonTree opened={opened} stale={dirty} />
+        <JsonTree opened={opened} stale={dirty} hidden={!large && !showTree} />
       </div>
       <div className={`operation-status ${error ? "error" : ""}`} role="status">
         {busy ? (

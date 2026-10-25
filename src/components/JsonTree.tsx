@@ -17,9 +17,11 @@ interface Row {
 export function JsonTree({
   opened,
   stale,
+  hidden = false,
 }: {
   opened?: Opened;
   stale: boolean;
+  hidden?: boolean;
 }) {
   const [pages, setPages] = useState<Map<number, JsonNode[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -129,7 +131,7 @@ export function JsonTree({
   const start = Math.max(0, Math.floor(scroll / 28) - 6);
   const visible = rows.slice(start, start + Math.ceil(height / 28) + 12);
   return (
-    <div className="pane tree-pane">
+    <div id="json-node-tree" className="pane tree-pane" hidden={hidden}>
       <div className="pane-header">
         <span>
           <Layers size={14} />

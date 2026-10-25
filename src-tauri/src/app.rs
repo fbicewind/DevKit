@@ -1,6 +1,6 @@
 use crate::{
     error::{AppError, Result},
-    json::{Control, Document, Transform, EDIT_BYTES},
+    json::{Control, Document, Transform},
     settings::{self, Bounds, Settings, ShortcutBinding},
     tools::{
         self, RandomRequest, SignatureRequest, SignatureResult, SignatureTemplate, TimeResult,
@@ -130,10 +130,18 @@ fn json_open(
     {
         return Err(AppError::new("INVALID_ARGUMENT", "请选择一个 JSON 来源"));
     }
-    if text.as_ref().is_some_and(|s| s.len() > EDIT_BYTES) {
+    let edit_limit = state
+        .settings
+        .lock()
+        .map_err(|_| internal())?
+        .json_edit_limit_bytes();
+    if text.as_ref().is_some_and(|s| s.len() > edit_limit) {
         return Err(AppError::new(
             "LIMIT_EXCEEDED",
-            "编辑器上限为 2 MiB；请使用文件或导入剪贴板打开大 JSON",
+            format!(
+                "当前编辑上限为 {} MiB；请调整设置，或使用文件 / 剪贴板导入大 JSON",
+                edit_limit / 1024 / 1024
+            ),
         ));
     }
     let total = path
@@ -164,13 +172,13 @@ fn json_open(
                 session_id: sid.clone(),
                 size_bytes: doc.size(),
                 root: doc.node(0, None)?,
-                mode: if doc.size() > EDIT_BYTES {
+                mode: if doc.size() > edit_limit {
                     "large"
                 } else {
                     "edit"
                 }
                 .into(),
-                text: doc.text().ok().map(str::to_string),
+                text: doc.text(edit_limit).ok().map(str::to_string),
                 node_count: doc.node_count(),
                 duplicate_keys: doc.duplicate_keys,
             };
@@ -230,6 +238,11 @@ fn json_transform(
 ) -> Result<String> {
     let state = app.state::<Arc<Runtime>>();
     let doc = session(&state, &session_id)?;
+    let edit_limit = state
+        .settings
+        .lock()
+        .map_err(|_| internal())?
+        .json_edit_limit_bytes();
     options.validate()?;
     let (id, task) = start_task(&state, "变换 / 写入临时文件", doc.size())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -238,7 +251,7 @@ fn json_transform(
                 doc.export(&PathBuf::from(&path), &options, &task.control)?;
                 task.status.lock().map_err(|_| internal())?.destination = Some(path);
             } else {
-                let text = doc.output_text(&options, &task.control)?;
+                let text = doc.output_text(&options, &task.control, edit_limit)?;
                 task.status.lock().map_err(|_| internal())?.text = Some(text);
             }
             Ok(())
@@ -451,6 +464,7 @@ struct SettingsPatch {
     remember_window: Option<bool>,
     compact: Option<bool>,
     theme: Option<String>,
+    json_edit_limit_mib: Option<u32>,
 }
 #[tauri::command]
 fn settings_update(app: tauri::AppHandle, patch: SettingsPatch) -> Result<Settings> {
@@ -471,6 +485,9 @@ fn settings_update(app: tauri::AppHandle, patch: SettingsPatch) -> Result<Settin
     }
     if let Some(v) = patch.theme {
         next.theme = v;
+    }
+    if let Some(v) = patch.json_edit_limit_mib {
+        next.json_edit_limit_mib = v;
     }
     next.validate()?;
     if let Some(w) = app.get_webview_window("main") {
@@ -588,6 +605,7 @@ fn window_set_always_on_top(app: tauri::AppHandle, value: bool) -> Result<Settin
             remember_window: None,
             compact: None,
             theme: None,
+            json_edit_limit_mib: None,
         },
     )
 }

@@ -13,7 +13,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           editor: [
-            "codemirror",
             "@codemirror/view",
             "@codemirror/state",
             "@codemirror/lang-json",

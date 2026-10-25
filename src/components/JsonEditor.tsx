@@ -1,33 +1,31 @@
 import { useEffect, useRef } from "react";
-import {
-  EditorView,
-  keymap,
-  lineNumbers,
-  highlightActiveLineGutter,
-} from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
-import { basicSetup } from "codemirror";
+import { jsonEditorSetup } from "./json-editor-setup";
 import { json } from "@codemirror/lang-json";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
+import { jsonByteSize, updatedByteLength } from "../services/json-size";
 export function JsonEditor({
   value,
   onChange,
   disabled,
   errorLine,
   onLimit,
+  limitBytes,
 }: {
   value: string;
   onChange: (value: string) => void;
   disabled: boolean;
   errorLine?: number;
   onLimit: () => void;
+  limitBytes: number;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const syncing = useRef(false);
-  const props = useRef({ onChange, onLimit });
-  props.current = { onChange, onLimit };
+  const props = useRef({ onChange, onLimit, limitBytes });
+  props.current = { onChange, onLimit, limitBytes };
   useEffect(() => {
     if (!container.current) return;
     const editor = new EditorView({
@@ -35,9 +33,8 @@ export function JsonEditor({
       state: EditorState.create({
         doc: value,
         extensions: [
-          basicSetup,
-          lineNumbers(),
-          highlightActiveLineGutter(),
+          jsonEditorSetup,
+          jsonByteSize,
           json(),
           syntaxHighlighting(
             HighlightStyle.define([
@@ -49,9 +46,13 @@ export function JsonEditor({
           ),
           keymap.of([{ key: "Mod-Enter", run: () => false }]),
           EditorState.transactionFilter.of((tr) => {
-            if (tr.docChanged && tr.newDoc.length > 2 * 1024 * 1024) {
-              queueMicrotask(() => props.current.onLimit());
-              return [];
+            if (tr.docChanged && !syncing.current) {
+              const previous = tr.startState.field(jsonByteSize);
+              const next = updatedByteLength(previous, tr);
+              if (next > props.current.limitBytes && next > previous) {
+                queueMicrotask(() => props.current.onLimit());
+                return [];
+              }
             }
             return tr;
           }),

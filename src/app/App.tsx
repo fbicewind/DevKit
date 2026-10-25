@@ -44,6 +44,17 @@ export default function App() {
   const [ready, setReady] = useState(!native);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const updating = useRef(false);
+  const [narrowWindow, setNarrowWindow] = useState(
+    () => matchMedia("(max-width: 800px)").matches,
+  );
+  const [compactOverride, setCompactOverride] = useState<boolean>();
+  const sidebarCompact = compactOverride ?? (settings.compact || narrowWindow);
+  useEffect(() => {
+    const media = matchMedia("(max-width: 800px)");
+    const handler = () => setNarrowWindow(media.matches);
+    media.addEventListener("change", handler);
+    return () => media.removeEventListener("change", handler);
+  }, []);
   const notice = useCallback((message: string, error?: boolean) => {
     setToast({ message, error });
     clearTimeout(timer.current);
@@ -57,7 +68,7 @@ export default function App() {
       settingsError?: string;
     }>("settings_get")
       .then((r) => {
-        setSettings(r.settings);
+        setSettings({ ...defaultSettings, ...r.settings });
         setShortcutErrors(r.shortcutErrors);
         if (r.settingsError)
           notice(`已备份损坏配置并恢复默认：${r.settingsError}`, true);
@@ -67,12 +78,15 @@ export default function App() {
     return () => clearTimeout(timer.current);
   }, [notice]);
   const update = async (patch: Partial<Settings>) => {
-    if (updating.current) return;
+    if (updating.current) return false;
     updating.current = true;
     try {
       setSettings(await call<Settings>("settings_update", { patch }));
+      if (patch.compact !== undefined) setCompactOverride(patch.compact);
+      return true;
     } catch (e) {
       notice(errorMessage(e), true);
+      return false;
     } finally {
       updating.current = false;
     }
@@ -152,7 +166,7 @@ export default function App() {
   return (
     <NoticeContext.Provider value={notice}>
       <div
-        className={`app ${settings.compact ? "compact" : ""}`}
+        className={`app ${sidebarCompact ? "compact" : ""}`}
         data-theme={theme}
       >
         <header className="titlebar" data-tauri-drag-region>
@@ -202,7 +216,7 @@ export default function App() {
               </div>
             </div>
             <div className="sidebar-section">工作空间</div>
-            <nav aria-label="工具导航">
+            <nav id="devkit-sidebar-nav" aria-label="工具导航">
               {nav.map(({ id, label, sub, icon: Icon }) => (
                 <button
                   key={id}
@@ -230,11 +244,13 @@ export default function App() {
                 <span>v1.0.0</span>
                 <button
                   className="icon-button"
-                  title={settings.compact ? "展开侧边栏" : "收起侧边栏"}
-                  aria-label={settings.compact ? "展开侧边栏" : "收起侧边栏"}
-                  onClick={() => void update({ compact: !settings.compact })}
+                  title={sidebarCompact ? "展开侧边栏" : "收起侧边栏"}
+                  aria-label={sidebarCompact ? "展开侧边栏" : "收起侧边栏"}
+                  aria-controls="devkit-sidebar-nav"
+                  aria-expanded={!sidebarCompact}
+                  onClick={() => void update({ compact: !sidebarCompact })}
                 >
-                  {settings.compact ? (
+                  {sidebarCompact ? (
                     <PanelLeftOpen size={15} />
                   ) : (
                     <PanelLeftClose size={15} />
@@ -261,7 +277,10 @@ export default function App() {
             {ready ? (
               <>
                 <div hidden={view !== "json"}>
-                  <JsonTool active={view === "json"} />
+                  <JsonTool
+                    active={view === "json"}
+                    editLimitMib={settings.jsonEditLimitMib}
+                  />
                 </div>
                 <div hidden={view !== "time"}>
                   <TimeTool active={view === "time"} />
@@ -280,7 +299,7 @@ export default function App() {
                 </div>
                 <div hidden={view !== "settings"}>
                   <SettingsTool
-                    settings={settings}
+                    settings={{ ...settings, compact: sidebarCompact }}
                     setSettings={setSettings}
                     update={update}
                     shortcutErrors={shortcutErrors}

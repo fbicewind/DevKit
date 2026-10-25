@@ -12,7 +12,6 @@ use std::{
 };
 
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
-pub const EDIT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_NODES: usize = 1_500_000;
 pub const MAX_DEPTH: usize = 128;
 const NONE: u32 = u32::MAX;
@@ -358,8 +357,8 @@ impl Document {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
-    pub fn text(&self) -> Result<&str> {
-        if self.size() > EDIT_BYTES {
+    pub fn text(&self, edit_limit: usize) -> Result<&str> {
+        if self.size() > edit_limit {
             Err(AppError::new("LIMIT_EXCEEDED", "大文件请使用树视图并导出"))
         } else {
             Ok(&self.source)
@@ -447,26 +446,54 @@ impl Document {
         self.write_node(0, 0, &mut writer, options, control)?;
         writer.flush().map_err(AppError::io)
     }
-    pub fn output_text(&self, options: &Transform, control: &Control) -> Result<String> {
-        if self.size() > EDIT_BYTES {
-            return Err(AppError::new("LIMIT_EXCEEDED", "大文件只支持导出"));
+    pub fn output_text(
+        &self,
+        options: &Transform,
+        control: &Control,
+        edit_limit: usize,
+    ) -> Result<String> {
+        if edit_limit == 0 || edit_limit > MAX_BYTES {
+            return Err(AppError::new("INVALID_ARGUMENT", "无效 JSON 编辑上限"));
         }
-        struct Bounded(Vec<u8>);
+        let limit_error = || {
+            AppError::new(
+                "LIMIT_EXCEEDED",
+                format!(
+                    "内容超过当前编辑上限 {} MiB，请调整设置或直接导出",
+                    edit_limit / 1024 / 1024
+                ),
+            )
+        };
+        if self.size() > edit_limit {
+            return Err(limit_error());
+        }
+        struct Bounded {
+            bytes: Vec<u8>,
+            limit: usize,
+            exceeded: bool,
+        }
         impl Write for Bounded {
             fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-                if self.0.len() + b.len() > EDIT_BYTES {
-                    return Err(std::io::Error::other("格式化输出超过 2 MiB，请直接导出"));
+                if self.bytes.len() + b.len() > self.limit {
+                    self.exceeded = true;
+                    return Err(std::io::Error::other("JSON 编辑输出超限"));
                 }
-                self.0.extend_from_slice(b);
+                self.bytes.extend_from_slice(b);
                 Ok(b.len())
             }
             fn flush(&mut self) -> std::io::Result<()> {
                 Ok(())
             }
         }
-        let mut out = Bounded(Vec::new());
-        self.transform(&mut out, options, control)?;
-        String::from_utf8(out.0).map_err(|_| AppError::new("JSON_INVALID_UTF8", "输出编码错误"))
+        let mut out = Bounded {
+            bytes: Vec::new(),
+            limit: edit_limit,
+            exceeded: false,
+        };
+        if let Err(error) = self.transform(&mut out, options, control) {
+            return Err(if out.exceeded { limit_error() } else { error });
+        }
+        String::from_utf8(out.bytes).map_err(|_| AppError::new("JSON_INVALID_UTF8", "输出编码错误"))
     }
     pub fn export(&self, path: &Path, options: &Transform, control: &Control) -> Result<()> {
         let parent = path
@@ -632,18 +659,20 @@ mod tests {
         let src =
             r#"{"z":9007199254740993123456789,"a":[1.2300e+45,{"b":-0,"a":0.00000000000000001}]}"#;
         let doc = Document::parse(src.into(), &c).unwrap();
-        let out = doc.output_text(&op("sort"), &c).unwrap();
+        let out = doc.output_text(&op("sort"), &c, 10 * 1024 * 1024).unwrap();
         assert!(out.contains("9007199254740993123456789"));
         assert!(out.contains("1.2300e+45"));
         assert!(out.find("\"a\"").unwrap() < out.find("\"z\"").unwrap());
         let d = Document::parse(r#"{"a":1,"\u0061":2}"#.into(), &c).unwrap();
         assert!(d.duplicate_keys);
         assert_eq!(
-            d.output_text(&op("minify"), &c).unwrap(),
+            d.output_text(&op("minify"), &c, 10 * 1024 * 1024).unwrap(),
             r#"{"a":1,"\u0061":2}"#
         );
         assert_eq!(
-            d.output_text(&op("sort"), &c).unwrap_err().code,
+            d.output_text(&op("sort"), &c, 10 * 1024 * 1024)
+                .unwrap_err()
+                .code,
             "JSON_DUPLICATE_KEY"
         );
     }
@@ -677,7 +706,7 @@ mod tests {
         let page = d.children(0, 1, 2).unwrap();
         assert_eq!(page[0].summary, "2");
         assert_eq!(page[0].key.as_deref(), Some("1"));
-        let out = d.output_text(&op("sort"), &c).unwrap();
+        let out = d.output_text(&op("sort"), &c, 10 * 1024 * 1024).unwrap();
         assert!(out.starts_with("[\n  3,\n  2,\n  1,"));
         assert!(out.find("\"Z\"").unwrap() < out.find("\"中\"").unwrap());
     }
@@ -761,13 +790,42 @@ mod tests {
         let c = Control::default();
         let source = r#"{"a":" \\ \" \u4e2d \n ","😀":1.20E-004,"z":[9,8,7]}"#;
         let d = Document::parse(source.into(), &c).unwrap();
-        assert_eq!(d.output_text(&op("minify"), &c).unwrap(), source);
+        assert_eq!(
+            d.output_text(&op("minify"), &c, 10 * 1024 * 1024).unwrap(),
+            source
+        );
         let mut options = op("sort");
         options.sort_direction = Some("desc".into());
         options.indent = Some("tab".into());
-        let result = d.output_text(&options, &c).unwrap();
+        let result = d.output_text(&options, &c, 10 * 1024 * 1024).unwrap();
         assert!(result.starts_with("{\n\t\"😀\": 1.20E-004,"));
         assert!(result.contains(r#"" \\ \" \u4e2d \n ""#));
+    }
+    #[test]
+    fn configurable_edit_limit_applies_to_source_and_output() {
+        let c = Control::default();
+        let limit = 10 * 1024 * 1024;
+        let source = format!("\"{}\"", "a".repeat(limit - 2));
+        let d = Document::parse(source, &c).unwrap();
+        assert!(d.text(limit).is_ok());
+        assert_eq!(
+            d.output_text(&op("minify"), &c, limit).unwrap().len(),
+            limit
+        );
+        assert_eq!(d.text(2 * 1024 * 1024).unwrap_err().code, "LIMIT_EXCEEDED");
+        assert_eq!(
+            d.output_text(&op("format"), &c, 2 * 1024 * 1024)
+                .unwrap_err()
+                .code,
+            "LIMIT_EXCEEDED"
+        );
+        let d = Document::parse("[0,0,0]".into(), &c).unwrap();
+        assert!(d.text(7).is_ok());
+        assert_eq!(
+            d.output_text(&op("format"), &c, 7).unwrap_err().code,
+            "LIMIT_EXCEEDED"
+        );
+        assert!(d.output_text(&op("format"), &c, 64).is_ok());
     }
     #[test]
     #[ignore]

@@ -123,6 +123,7 @@ export interface Settings {
   rememberWindow: boolean;
   compact: boolean;
   theme: string;
+  jsonEditLimitMib: number;
   shortcuts: Binding[];
   templates: Template[];
 }
@@ -132,6 +133,7 @@ export const defaultSettings: Settings = {
   rememberWindow: true,
   compact: false,
   theme: "dark",
+  jsonEditLimitMib: 10,
   templates: [],
   shortcuts: [
     ["window.toggle", "global", "Alt+Space"],

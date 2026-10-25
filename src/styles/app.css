@@ -190,9 +190,12 @@ textarea:focus-visible {
   padding: 24px 12px 8px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   transition: width 0.2s;
 }
 .brand {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -227,12 +230,17 @@ textarea:focus-visible {
   font-weight: 500;
 }
 .sidebar-section {
+  flex-shrink: 0;
   padding: 0 11px 12px;
   font-size: 9px;
   letter-spacing: 1.5px;
   color: var(--muted);
 }
 nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -288,6 +296,7 @@ nav {
   margin-top: 16px;
 }
 .sidebar-bottom {
+  flex-shrink: 0;
   margin-top: auto;
   padding: 18px 8px 0;
 }
@@ -467,6 +476,12 @@ textarea:focus {
   gap: 12px;
   min-height: 280px;
   height: clamp(280px, calc(100dvh - 320px), 900px);
+}
+.json-panes.editor-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tree-pane[hidden] {
+  display: none;
 }
 .pane {
   background: var(--editor);
@@ -1315,32 +1330,6 @@ textarea {
   }
 }
 @media (max-width: 800px) {
-  .sidebar {
-    width: 62px;
-    padding: 24px 7px 8px;
-  }
-  .brand {
-    padding: 0 6px 28px;
-  }
-  .brand-text,
-  .sidebar-section,
-  .nav-label,
-  .nav-indicator,
-  .local-badge,
-  .sidebar-meta > span {
-    display: none;
-  }
-  .nav-item {
-    justify-content: center;
-    padding: 13px 0;
-    min-height: 46px;
-  }
-  .sidebar-bottom {
-    padding: 0;
-  }
-  .sidebar-meta {
-    justify-content: center;
-  }
   .workspace {
     padding: 22px 18px 16px;
   }
@@ -1484,4 +1473,31 @@ textarea {
     transition: none !important;
     animation: none !important;
   }
+}
+
+.json-editor .json-fold-toggle {
+  padding: 0;
+  width: 16px;
+  height: 18px;
+  font: 14px/1 var(--mono);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--muted);
+  vertical-align: middle;
+}
+.json-editor .json-fold-toggle:hover {
+  color: var(--accent);
+  background: var(--hover);
+}
+.json-editor .cm-foldPlaceholder {
+  display: inline-block;
+  padding: 0 5px;
+  font: inherit;
+  line-height: 1.2;
+  color: var(--accent);
+  background: var(--button);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
 }

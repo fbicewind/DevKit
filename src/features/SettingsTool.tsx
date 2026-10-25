@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Settings2,
+  Braces,
   Keyboard,
   RotateCcw,
   Pin,
@@ -26,10 +27,34 @@ export function SettingsTool({
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
-  update: (patch: Partial<Settings>) => Promise<void>;
+  update: (patch: Partial<Settings>) => Promise<boolean>;
   shortcutErrors: string[];
   setShortcutErrors: (errors: string[]) => void;
 }) {
+  const [editLimitDraft, setEditLimitDraft] = useState(
+    String(settings.jsonEditLimitMib),
+  );
+  const [limitError, setLimitError] = useState("");
+  const [savingLimit, setSavingLimit] = useState(false);
+  useEffect(
+    () => setEditLimitDraft(String(settings.jsonEditLimitMib)),
+    [settings.jsonEditLimitMib],
+  );
+  const saveEditLimit = async () => {
+    const value = Number(editLimitDraft);
+    if (!Number.isInteger(value) || value < 1 || value > 64) {
+      setLimitError("请输入 1–64 之间的整数 MiB");
+      return;
+    }
+    setLimitError("");
+    setSavingLimit(true);
+    try {
+      if (await update({ jsonEditLimitMib: value }))
+        notice(`JSON 编辑上限已保存为 ${value} MiB`);
+    } finally {
+      setSavingLimit(false);
+    }
+  };
   const [recording, setRecording] = useState<string>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -171,6 +196,50 @@ export function SettingsTool({
             </select>
           </Field>
         </div>
+      </section>
+      <section className="card">
+        <div className="card-heading">
+          <h2>
+            <Braces size={16} />
+            JSON 编辑
+          </h2>
+          <span className="tag">JSON</span>
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveEditLimit();
+          }}
+        >
+          <Field
+            label="编辑上限（MiB）"
+            help="默认 10 MiB，可设置为 1–64 MiB。按 UTF-8 字节计算；超过上限的文件使用只读树视图。"
+          >
+            <input
+              type="number"
+              min="1"
+              max="64"
+              step="1"
+              required
+              value={editLimitDraft}
+              onChange={(e) => {
+                setEditLimitDraft(e.target.value);
+                setLimitError("");
+              }}
+            />
+          </Field>
+          <button className="primary" type="submit" disabled={savingLimit}>
+            保存编辑上限
+          </button>
+          {limitError && (
+            <p role="alert" className="error">
+              {limitError}
+            </p>
+          )}
+        </form>
+        <p className="help">
+          保存后，编辑输入、格式化输出和新打开的文件使用新上限。已有内容会保留；只读文件调整上限后需重新打开。
+        </p>
       </section>
       <section className="card">
         <div className="card-heading">

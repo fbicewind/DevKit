@@ -46,6 +46,7 @@ pub struct Settings {
     pub remember_window: bool,
     pub compact: bool,
     pub theme: String,
+    pub json_edit_limit_mib: u32,
     pub shortcuts: Vec<ShortcutBinding>,
     pub bounds: Option<Bounds>,
     pub templates: Vec<SignatureTemplate>,
@@ -58,6 +59,7 @@ impl Default for Settings {
             remember_window: true,
             compact: false,
             theme: "dark".into(),
+            json_edit_limit_mib: 10,
             shortcuts: defaults(),
             bounds: None,
             templates: vec![],
@@ -85,7 +87,16 @@ impl Settings {
         settings.validate()?;
         Ok(settings)
     }
+    pub fn json_edit_limit_bytes(&self) -> usize {
+        self.json_edit_limit_mib as usize * 1024 * 1024
+    }
     pub fn validate(&self) -> Result<()> {
+        if !(1..=64).contains(&self.json_edit_limit_mib) {
+            return Err(AppError::new(
+                "SETTINGS_INVALID",
+                "JSON 编辑上限须为 1–64 MiB 的整数",
+            ));
+        }
         validate_shortcuts(&self.shortcuts)?;
         if !["dark", "light", "system"].contains(&self.theme.as_str()) || self.templates.len() > 100
         {
@@ -205,6 +216,23 @@ pub fn validate_shortcuts(bindings: &[ShortcutBinding]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn json_limit_defaults_migrates_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"version":1,"compact":true}"#).unwrap();
+        let mut settings = Settings::load(&path).unwrap();
+        assert_eq!(settings.json_edit_limit_mib, 10);
+        assert_eq!(settings.json_edit_limit_bytes(), 10 * 1024 * 1024);
+        assert!(settings.compact);
+        settings.json_edit_limit_mib = 32;
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().json_edit_limit_mib, 32);
+        for value in [0, 65, u32::MAX] {
+            settings.json_edit_limit_mib = value;
+            assert_eq!(settings.validate().unwrap_err().code, "SETTINGS_INVALID");
+        }
+    }
     #[test]
     fn conflicts_and_persistence() {
         let mut s = Settings::default();
